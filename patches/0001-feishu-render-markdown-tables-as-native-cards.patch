@@ -1,0 +1,173 @@
+diff --git a/gateway/platforms/feishu.py b/gateway/platforms/feishu.py
+index 4814107ba..008180df8 100644
+--- a/gateway/platforms/feishu.py
++++ b/gateway/platforms/feishu.py
+@@ -155,8 +155,15 @@ _MARKDOWN_HINT_RE = re.compile(
+     re.MULTILINE,
+ )
+ # Detect markdown tables: a line starting with | followed by a separator line.
+-# Feishu post-type 'md' elements do not render tables, so we force text mode.
++# Feishu post-type 'md' elements do not render tables, so we route table-bearing
++# messages through an interactive card with schema 2.0 native table components.
+ _MARKDOWN_TABLE_RE = re.compile(r"^\|.*\|\n\|[-|: ]+\|", re.MULTILINE)
++# Match a contiguous markdown table block: header | separator | body rows.
++# Used by the table-card builder to extract table blocks from prose.
++_MARKDOWN_TABLE_BLOCK_RE = re.compile(
++    r"(?:^|\n)((?:[ \t]*\|.*\|[ \t]*\n)[ \t]*\|[-|: ]+\|[ \t]*\n(?:[ \t]*\|.*\|[ \t]*(?:\n|$))+)",
++    re.MULTILINE,
++)
+ _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+ _MARKDOWN_FENCE_OPEN_RE = re.compile(r"^```([^\n`]*)\s*$")
+ _MARKDOWN_FENCE_CLOSE_RE = re.compile(r"^```\s*$")
+@@ -560,6 +567,132 @@ def _build_markdown_post_payload(content: str) -> str:
+     )
+ 
+ 
++def _parse_markdown_table_block(block: str) -> Optional[Dict[str, Any]]:
++    """Parse a markdown pipe-table block into header + row dicts.
++
++    Returns None if the block isn't a well-formed table.
++    """
++    raw_lines = [ln for ln in block.splitlines() if ln.strip()]
++    if len(raw_lines) < 2:
++        return None
++
++    def _split_row(line: str) -> List[str]:
++        s = line.strip()
++        if s.startswith("|"):
++            s = s[1:]
++        if s.endswith("|"):
++            s = s[:-1]
++        return [c.strip() for c in s.split("|")]
++
++    header_cells = _split_row(raw_lines[0])
++    separator_cells = _split_row(raw_lines[1])
++    if not header_cells or not all(re.match(r"^:?-+:?$", c) for c in separator_cells):
++        return None
++    body_rows = [_split_row(ln) for ln in raw_lines[2:]]
++    if not body_rows:
++        return None
++
++    aligns: List[str] = []
++    for sep in separator_cells:
++        if sep.startswith(":") and sep.endswith(":"):
++            aligns.append("center")
++        elif sep.endswith(":"):
++            aligns.append("right")
++        else:
++            aligns.append("left")
++
++    columns: List[Dict[str, str]] = []
++    for idx, header in enumerate(header_cells):
++        align = aligns[idx] if idx < len(aligns) else "left"
++        columns.append({
++            "name": f"col_{idx}",
++            "display_name": header or f"列{idx + 1}",
++            "width": "auto",
++            "horizontal_align": align,
++            "data_type": "text",
++        })
++
++    rows: List[Dict[str, str]] = []
++    for body in body_rows:
++        row: Dict[str, str] = {}
++        for idx, _ in enumerate(columns):
++            row[f"col_{idx}"] = body[idx] if idx < len(body) else ""
++        rows.append(row)
++
++    return {"columns": columns, "rows": rows}
++
++
++def _build_table_card_elements(content: str) -> Optional[List[Dict[str, Any]]]:
++    """Split content into alternating markdown / native-table elements.
++
++    Returns None if no parsable table blocks are found.
++    """
++    elements: List[Dict[str, Any]] = []
++    cursor = 0
++    found_table = False
++
++    for match in _MARKDOWN_TABLE_BLOCK_RE.finditer(content):
++        block = match.group(1)
++        table_payload = _parse_markdown_table_block(block)
++        if not table_payload:
++            continue
++        # Account for the optional leading newline captured by (?:^|\n)
++        block_start = match.start(1)
++        prose_before = content[cursor:block_start].strip("\n")
++        if prose_before.strip():
++            elements.append({"tag": "markdown", "content": prose_before})
++        elements.append({
++            "tag": "table",
++            "page_size": max(5, min(len(table_payload["rows"]), 10)),
++            "row_height": "low",
++            "header_style": {
++                "text_align": "center",
++                "text_size": "normal_v2",
++                "background_style": "grey",
++                "text_color": "default",
++                "bold": True,
++                "lines": 1,
++            },
++            "columns": table_payload["columns"],
++            "rows": table_payload["rows"],
++        })
++        cursor = match.end(1)
++        found_table = True
++
++    if not found_table:
++        return None
++
++    tail = content[cursor:].strip("\n")
++    if tail.strip():
++        elements.append({"tag": "markdown", "content": tail})
++
++    return elements
++
++
++def _build_table_card_payload(content: str, *, header_template: str = "blue") -> Optional[str]:
++    """Build a schema 2.0 interactive-card payload that renders markdown tables.
++
++    Falls back to None if no table blocks were found, letting the caller route
++    through plain text or post-type rendering.
++    """
++    elements = _build_table_card_elements(content)
++    if not elements:
++        return None
++    summary_text = _strip_markdown_to_plain_text(content)
++    summary_text = summary_text.replace("\n", " ").strip()
++    if len(summary_text) > 100:
++        summary_text = summary_text[:97] + "..."
++    card = {
++        "schema": "2.0",
++        "config": {
++            "streaming_mode": False,
++            "summary": {"content": summary_text or "Hermes message"},
++        },
++        "body": {"elements": elements},
++    }
++    return json.dumps(card, ensure_ascii=False)
++
++
+ def _build_markdown_post_rows(content: str) -> List[List[Dict[str, str]]]:
+     """Build Feishu post rows while isolating fenced code blocks.
+ 
+@@ -4374,10 +4507,15 @@ class FeishuAdapter(BasePlatformAdapter):
+     # =========================================================================
+ 
+     def _build_outbound_payload(self, content: str) -> tuple[str, str]:
+-        # Feishu post-type 'md' elements do not render markdown tables; sending
+-        # table content as post causes the message to appear blank on the client.
+-        # Force plain text for anything that looks like a markdown table.
++        # Markdown tables: Feishu post-type 'md' elements don't render them, but
++        # interactive cards with schema 2.0 native table components do. Build a
++        # card so headers, alignment, and pagination are preserved client-side.
+         if _MARKDOWN_TABLE_RE.search(content):
++            card_payload = _build_table_card_payload(content)
++            if card_payload is not None:
++                return "interactive", card_payload
++            # Parsing failed (malformed table) — fall through to plain text so
++            # the user still sees the raw content rather than a blank message.
+             text_payload = {"text": content}
+             return "text", json.dumps(text_payload, ensure_ascii=False)
+         if _MARKDOWN_HINT_RE.search(content):
