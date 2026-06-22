@@ -1,0 +1,62 @@
+# ──────────────────────────────────────────────────────────────
+# Hermes 主模型配置示例 (~/.hermes/config.yaml 里相关字段)
+#
+# hms 工具只操作以下两段:
+#   1. model.{provider,default,base_url,api_key}     (主模型槽位)
+#   2. providers.<name>.api_key                       (互斥开关)
+#
+# 其它字段一概不动。
+# ──────────────────────────────────────────────────────────────
+
+model:
+  provider: volcengine-agent-plan        # 当前主 provider
+  default: glm-latest                    # 当前主 model id
+  base_url: https://ark.cn-beijing.volces.com/api/plan/v3
+  api_key: ark-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+providers:
+  # 火山方舟 Agent Plan: 一家聚合 GLM / DeepSeek / 豆包 / Kimi / MiniMax
+  volcengine-agent-plan:
+    base_url: https://ark.cn-beijing.volces.com/api/plan/v3
+    api_key: ark-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    models:
+      - { id: glm-latest,           context_length: 128000 }
+      - { id: glm-5.2,              context_length: 128000 }
+      - { id: deepseek-v4-flash,    context_length: 1000000 }
+      - { id: deepseek-v4-pro,      context_length: 1000000 }
+      - { id: minimax-m3,           context_length: 256000 }
+      - { id: doubao-seed-2.0-pro,  context_length: 256000 }
+      - { id: doubao-seed-2.0-mini, context_length: 256000 }
+      - { id: kimi-k2.6,            context_length: 200000 }
+
+  # DeepSeek 官方直连
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    api_key: __DISABLED__              # 未激活 → 互斥
+    models:
+      - { id: deepseek-v4-flash, context_length: 1000000 }
+      - { id: deepseek-v4-pro,   context_length: 1000000 }
+
+  # Z.AI / 智谱 GLM 官方
+  zai:
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key: __DISABLED__
+    models:
+      - { id: glm-4.6, context_length: 128000 }
+      - { id: glm-4.5, context_length: 128000 }
+
+  # OpenRouter 聚合 (示例: 还没补 key)
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key: __NEEDS_KEY__              # 等待补 key, hms 不会把它翻成 DISABLED
+    models:
+      - { id: openai/gpt-4o-mini }
+      - { id: anthropic/claude-3.5-sonnet }
+      - { id: deepseek/deepseek-v4-flash }
+
+# ──────────────────────────────────────────────────────────────
+# api_key 三态:
+#   - 真实 key (sk-..., ark-...)  → 该 provider 激活
+#   - "__DISABLED__"              → 该 provider 被互斥关掉, 不会被调用
+#   - "__NEEDS_KEY__"             → 占位, 等你补 key, hms 永远不动它
+# ──────────────────────────────────────────────────────────────

@@ -1,0 +1,21 @@
+# 真实凭证一律拦截
+hms_keys.yaml
+*_keys.yaml
+.env
+.env.*
+!.env.example
+
+# 用户私有 config
+config.yaml
+!examples/config.example.yaml
+
+# 备份与临时文件
+backups/
+*.tmp
+*.bak
+*~
+
+# macOS / IDE
+.DS_Store
+.vscode/
+.idea/

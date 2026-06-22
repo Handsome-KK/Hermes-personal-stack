@@ -1,0 +1,20 @@
+# ──────────────────────────────────────────────────────────────
+# Vault: hms 真实 api_key 的"金库"
+# 默认路径: ~/.hermes/private/hms_keys.yaml
+# 权限:     chmod 600
+#
+# 设计原则:
+#   - vault 是唯一持有真实 key 的地方
+#   - hms 切换时从 vault 读 key, 写进 config.yaml 的对应 provider
+#   - vault 文件 .gitignore 掉, 永远不进版本控制
+#
+# 三态:
+#   真实 key            → 切到该 provider 时会被启用
+#   __NEEDS_KEY__       → 占位, hms 会拒绝切换并提示你补 key
+#   (缺失该 provider key) → 同上, hms 拒绝切换
+# ──────────────────────────────────────────────────────────────
+
+deepseek:              sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+volcengine-agent-plan: ark-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+zai:                   __NEEDS_KEY__
+openrouter:            __NEEDS_KEY__

@@ -30,6 +30,7 @@ operational glue that turns it into a daily-driver assistant.
 |------------------|--------------------------------------------------------|
 | Agent core       | Hermes Agent (open source)                             |
 | Primary model    | Volcengine Ark Agent Plan (`plan/v3` endpoint)         |
+| Provider routing | [hms](./hms/) — multi-provider mutex-switcher (380 lines bash) |
 | Search backends  | Tavily · SerpAPI · Volcengine `askecho-search-infinity` MCP |
 | IM gateways      | Telegram · Feishu (Lark) — bidirectional               |
 | Image gen        | Doubao Seedream (Volcengine)                           |
@@ -109,6 +110,33 @@ Two pitfalls discovered and worked around:
 Wrote a `gateway-supervisor.sh` that polls every 30s and respawns the gateway if
 it exits, working around macOS 26+'s broken `launchctl bootstrap` for user agents.
 
+### 6. `hms` — multi-provider switcher with rollback safety
+A 380-line bash CLI for surgically swapping the active LLM provider in `config.yaml`
+without restarting Hermes or hand-editing YAML.
+
+**Why it exists:** I run 4 providers in parallel (Volcengine Ark / DeepSeek /
+Z.AI / OpenRouter). Hand-switching takes ~30s per swap, 5+ swaps a day, with a
+~10% YAML-corruption rate that costs 5 minutes to recover. `hms volc-glm` does
+the same thing in 3 seconds with zero corruption risk.
+
+**Safety chain:**
+
+```
+backup → vault key load → curl preflight → atomic write → git-style diff
+```
+
+Every switch creates a timestamped backup. Endpoint probes are tolerant
+(HTTP 200/4xx all count as alive — 401 from a bogus auth header still proves
+DNS + TLS + gateway are up). Mutex enforcement: only the active provider holds
+a real key; others get `__DISABLED__` so accidental routing fails loudly.
+
+**Hard rule:** `hms` never falls back automatically. Provider switching is
+always an explicit human action. If Volcengine is rate-limited, *you* run
+`hms ds-flash` to move to DeepSeek — the tool will not decide for you.
+
+→ Full PM-style writeup (PRFAQ, PRD, roadmap, GTM, launch recap) lives in
+[`hms/`](./hms/). Showcase-only — built for n=1 (me), not pip-installable.
+
 ---
 
 ## Configuration shape
@@ -172,6 +200,7 @@ the patches and notes here may save you a few late nights.
 - [ ] Add Discord native-rendering parity for table content
 - [ ] Wire a long-term memory hindsight bank dedicated to research notes
 - [ ] Open-source the brief-publish pipeline as a reusable Hermes plugin
+- [ ] hms: asciinema demo GIF for the README
 
 ---
 
@@ -185,6 +214,11 @@ the patches and notes here may save you a few late nights.
 ├── patches/
 │   └── 0001-feishu-render-markdown-tables-as-native-cards.patch
 │                                      # 173-line unified diff: the upstream-quality fix referenced above
+├── hms/                               # multi-provider switcher (see section 6 above)
+│   ├── README.md                      # quickstart + safety chain
+│   ├── src/hms.sh                     # 380-line bash CLI
+│   ├── examples/                      # config + vault layout (placeholders)
+│   └── docs/                          # 7-doc PM bundle: PRFAQ → recap
 └── LICENSE                            # MIT
 ```
 
