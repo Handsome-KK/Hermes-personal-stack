@@ -1,3 +1,5 @@
+**English** | [简体中文](./README.zh-CN.md)
+
 # Building My Own AI Assistant on Hermes Agent
 
 > Self-hosted, multi-channel, self-improving — extended with custom MCP integrations,
